@@ -163,38 +163,57 @@ function BlockDateJar({ data, update, T }) {
   );
 }
 
-/** Live camera stills from the household's CamWatch. */
+/**
+ * Live camera stills from the household's Home Assistant.
+ *
+ * This used to read CamWatch, which left the row empty for a household whose
+ * cameras live in Home Assistant -- the Home tab showed them and Today said
+ * "Connect CamWatch". Home Assistant's camera endpoints already exist for
+ * members and displays alike, and the server only serves the cameras the
+ * household chose to show, so the row needs nothing new from it.
+ */
+const haCameras = (entities) => (entities || []).filter((e) => e.domain === "camera");
+
+/* Picks saved against a different camera source are ids that no longer exist.
+   Filtering by them would show nothing, which reads as "broken"; ignoring the
+   stale ones falls back to "all", which is what an empty selection means. */
+const livePicks = (picks, ids) => picks.filter((p) => ids.includes(p));
+
 function BlockCamera({ picks, T }) {
   const [cameras, setCameras] = useState(null);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
-    session.listCameras().then(setCameras).catch(() => setCameras([]));
+    session.homeEntities().then((es) => setCameras(haCameras(es))).catch(() => setCameras([]));
     const t = setInterval(() => setTick((n) => n + 1), 4000);
     return () => clearInterval(t);
   }, []);
 
   if (!cameras) return <p style={{ color: T.faint, fontSize: 13 }}>Loading cameras…</p>;
-  const shown = picks.length ? cameras.filter((c) => picks.includes(c.id)) : cameras;
+  const chosen = livePicks(picks, cameras.map((c) => c.entityId));
+  const shown = chosen.length ? cameras.filter((c) => chosen.includes(c.entityId)) : cameras;
   if (!shown.length) {
-    return <p style={{ color: T.faint, fontSize: 13 }}>No cameras. Connect CamWatch in Settings.</p>;
+    return <p style={{ color: T.faint, fontSize: 13 }}>No cameras. Choose some in Settings → Home Assistant.</p>;
   }
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))", gap: 8 }}>
-      {shown.slice(0, 6).map((c) => (
-        <div key={c.id} style={{ borderRadius: 10, overflow: "hidden", background: "#1B1720", aspectRatio: "16/9", position: "relative" }}>
-          <img
-            src={`${session.cameraSnapshotUrl(c.id)}${session.cameraSnapshotUrl(c.id).includes("?") ? "&" : "?"}t=${tick}`}
-            alt={c.name}
-            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-          />
-          <div style={{
-            position: "absolute", left: 0, right: 0, bottom: 0, padding: "4px 8px",
-            background: "linear-gradient(transparent,#0009)", color: "#fff", fontSize: 12, fontWeight: 700,
-          }}>{c.name}</div>
-        </div>
-      ))}
+      {shown.slice(0, 6).map((c) => {
+        const url = session.cameraUrl(c.entityId);
+        return (
+          <div key={c.entityId} style={{ borderRadius: 10, overflow: "hidden", background: "#1B1720", aspectRatio: "16/9", position: "relative" }}>
+            <img
+              src={`${url}${url.includes("?") ? "&" : "?"}t=${tick}`}
+              alt={c.name}
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+            />
+            <div style={{
+              position: "absolute", left: 0, right: 0, bottom: 0, padding: "4px 8px",
+              background: "linear-gradient(transparent,#0009)", color: "#fff", fontSize: 12, fontWeight: 700,
+            }}>{c.name}</div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -286,17 +305,12 @@ function PickList({ kind, picks, onToggle, T }) {
   useEffect(() => {
     let live = true;
     const done = (list) => { if (live) setOptions(list); };
-    if (kind === "camera") {
-      session.listCameras()
-        .then((cs) => done((cs || []).map((c) => ({ id: c.id, name: c.name }))))
-        .catch(() => done([]));
-    } else {
-      session.homeEntities()
-        .then((es) => done((es || [])
-          .filter((e) => ["light", "switch", "fan", "cover"].includes(e.domain))
-          .map((e) => ({ id: e.entityId, name: e.name }))))
-        .catch(() => done([]));
-    }
+    const domains = kind === "camera" ? ["camera"] : ["light", "switch", "fan", "cover"];
+    session.homeEntities()
+      .then((es) => done((es || [])
+        .filter((e) => domains.includes(e.domain))
+        .map((e) => ({ id: e.entityId, name: e.name }))))
+      .catch(() => done([]));
     return () => { live = false; };
   }, [kind]);
 
@@ -305,16 +319,17 @@ function PickList({ kind, picks, onToggle, T }) {
     return (
       <p style={{ color: T.faint, fontSize: 12 }}>
         {kind === "camera"
-          ? "No cameras yet. Connect CamWatch in Settings."
+          ? "No cameras yet. Choose some in Settings → Home Assistant."
           : "No devices yet. Connect Home Assistant in Settings."}
       </p>
     );
   }
 
+  const live = livePicks(picks, options.map((o) => o.id));
   return (
     <div style={{ width: "100%" }}>
       <div style={{ color: T.faint, fontSize: 12, marginBottom: 4 }}>
-        {picks.length ? `Showing ${picks.length} of ${options.length}` : "Showing all — tap to choose"}
+        {live.length ? `Showing ${live.length} of ${options.length}` : "Showing all — tap to choose"}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
         {options.map((o) => {

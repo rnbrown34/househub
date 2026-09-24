@@ -304,7 +304,7 @@ test("every settings section is reachable, and nothing was dropped", needs, asyn
     ["Household", ["Household name", "People"]],
     ["Screens", ["Display mode", "Sticky notes on Today", "Per-person summary on Today",
                  "Extra row on Today", "Displays"]],
-    ["Connections", ["Home Assistant", "Devices", "Cameras", "Two-way calendar sync", "AI"]],
+    ["Connections", ["Home Assistant", "Devices", "CamWatch", "Two-way calendar sync", "AI"]],
     ["Record", ["Archive"]],
     ["Account & data", ["Staying signed in", "Your data", "Import from the old HouseHub",
                         "Account", "Reset everything"]],

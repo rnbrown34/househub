@@ -270,7 +270,21 @@ export const listCameras = none;
 export const cameraAlerts = none;
 export const cameraSnapshotUrl = () => "";
 export const cameraStreamUrl = () => "";
-export const cameraUrl = () => "";
+/* Two Home Assistant cameras, so the Home tab and the Today cameras row have
+   something to show. A drawn still stands in for a snapshot. */
+const SANDBOX_CAMERAS = [
+  { entityId: "camera.front_door", name: "Front door", domain: "camera", state: "idle", sky: "#9CC3D5", ground: "#6E8B5E" },
+  { entityId: "camera.back_garden", name: "Back garden", domain: "camera", state: "idle", sky: "#C9B8D8", ground: "#557A46" },
+];
+const still = (c) => "data:image/svg+xml," + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180">` +
+  `<rect width="320" height="110" fill="${c.sky}"/><rect y="110" width="320" height="70" fill="${c.ground}"/>` +
+  `<text x="12" y="24" font-family="monospace" font-size="13" fill="#fff">${c.name.toUpperCase()} · SANDBOX</text></svg>`);
+export const cameraUrl = (id) => {
+  const c = SANDBOX_CAMERAS.find((x) => x.entityId === id);
+  // The trailing "#" makes the "?t=N" refresh suffix a fragment, not SVG text.
+  return c ? `${still(c)}#` : "";
+};
 
 export const listIntegrations = none;
 export const erasurePreview = async () => ({
@@ -303,7 +317,7 @@ export const decideProposal = ok;
 export const markProposalApplied = ok;
 export const withdrawProposal = ok;
 
-export const homeEntities = none;
+export const homeEntities = async () => SANDBOX_CAMERAS.map(({ sky, ground, ...e }) => e);
 export const homeControl = ok;
 export const homeDevices = async () => ({ entities: [], groups: [], rooms: [] });
 export const saveHomeDevices = ok;

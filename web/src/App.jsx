@@ -8332,6 +8332,41 @@ const SECTION_TABS = [
   { id: "server", label: "Server", Icon: Wrench },
 ];
 
+/**
+ * CamWatch, folded away unless it is in use.
+ *
+ * Cameras now come from Home Assistant for most households, so a full
+ * "Cameras" panel beside Home Assistant read as the place to set them up and
+ * was the wrong one. CamWatch stays for anyone who runs it: a connected
+ * household sees its panel exactly as before, everyone else sees one line.
+ */
+function CamWatchField({ T }) {
+  const [connected, setConnected] = useState(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    let live = true;
+    session.cameraConfig()
+      .then((s) => { if (live) setConnected(!!s?.connected); })
+      .catch(() => { if (live) setConnected(false); });
+    return () => { live = false; };
+  }, []);
+
+  if (connected === null) return null;
+  if (connected || open) {
+    return (
+      <Field label="CamWatch cameras">
+        <CamerasPanel theme={T} />
+      </Field>
+    );
+  }
+  return (
+    <button type="button" onClick={() => setOpen(true)} className="tapfade"
+      style={{ color: T.faint, fontSize: 13, background: "none", border: "none", padding: "2px 0 14px", textAlign: "left" }}>
+      Cameras come from Home Assistant. Using a separate CamWatch system instead? Connect it here ›
+    </button>
+  );
+}
+
 export function SettingsModal({ data, update, saveNow, syncCalendars, close, currentUser }) {
   const [name, setName] = useState(data.householdName || "Our Home");
   const [section, setSection] = useState("household");
@@ -8520,9 +8555,7 @@ export function SettingsModal({ data, update, saveNow, syncCalendars, close, cur
         <Field label="Devices">
           <DevicesPanel theme={T} />
         </Field>
-        <Field label="Cameras">
-          <CamerasPanel theme={T} />
-        </Field>
+        <CamWatchField T={T} />
         <Field label="Two-way calendar sync">
           <CaldavPanel theme={T} iAmAdmin={currentUser?.role === "admin"}
             collectEvents={(calId) => eventsForSync(data, calId)} />
