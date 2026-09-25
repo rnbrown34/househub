@@ -25,6 +25,8 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { Play, Pause, Plus, X, RotateCcw, Mic, Timer as TimerIcon } from "lucide-react";
 import * as TM from "../lib/timers.js";
 import { parseDuration, parseTimerCommand, parseStopCommand, matchTimerByName } from "../lib/timer-voice.js";
+import { parseTaskCommand, taskFromCommand } from "../lib/task-voice.js";
+import { uid } from "../lib/document.js";
 import { connectVoice } from "../lib/ha-voice.js";
 import * as session from "../lib/session.js";
 import { loadVoiceLink } from "../api.js";
@@ -239,7 +241,8 @@ function AddTimer({ T, onAdd, onClose, voice }) {
           hint here is true of both. */}
       {voice?.supported && (
         <p style={{ color: T.faint, fontSize: 11.5, marginTop: 8, lineHeight: 1.45 }}>
-          Or hold the microphone and say “set a timer for ten minutes for the pasta”.
+          Or tap the microphone and say “set a timer for ten minutes for the pasta”,
+          or “add a task to ring the plumber for Sam”.
         </p>
       )}
     </div>
@@ -279,11 +282,40 @@ export function TimerBar({ data, update, T, personId = "" }) {
     ...d, timers: (d.timers || []).filter((t) => t.id !== id),
   })), [update]);
 
-  /* Voice. A spoken instruction is either "start one" or "stop one", and the
-     stop check runs first: "cancel the pasta timer" contains no duration, but
-     "stop the 10 minute one" does, and reading that as a new timer would be a
-     genuinely annoying way to fail. */
+  /* A task added by voice, shown with an undo. A misheard timer runs out on
+     its own; a misheard task sits on the list until somebody deletes it, so
+     the one-tap way back matters more here than it does for timers. */
+  const [addedTask, setAddedTask] = useState(null);
+  useEffect(() => {
+    if (!addedTask) return undefined;
+    const t = setTimeout(() => setAddedTask(null), 10000);
+    return () => clearTimeout(t);
+  }, [addedTask]);
+
+  const addTask = useCallback((cmd) => {
+    const people = data?.people || [];
+    const who = cmd.assigned === "self" ? personId : cmd.personId;
+    const task = taskFromCommand({ ...cmd, personId: who }, uid);
+    update((d) => ({ ...d, tasks: [...(d.tasks || []), task] }));
+    setAddedTask({ id: task.id, title: task.title, who: people.find((p) => p.id === who)?.name || "" });
+  }, [data, update, personId]);
+
+  const undoTask = useCallback(() => {
+    if (!addedTask) return;
+    update((d) => ({ ...d, tasks: (d.tasks || []).filter((t) => t.id !== addedTask.id) }));
+    setAddedTask(null);
+  }, [addedTask, update]);
+
+  /* Voice. A spoken instruction is "add a task", "stop one", or "start one",
+     checked in that order. Tasks go first because they need the word "task"
+     to be recognised at all, while the stop check is loose on purpose: "add a
+     task to clear the gutters" contains "clear", and must not silence a
+     timer. Stop then runs before start: "cancel the pasta timer" contains no
+     duration, but "stop the 10 minute one" does, and reading that as a new
+     timer would be a genuinely annoying way to fail. */
   const handleSpoken = useCallback((text) => {
+    const taskCmd = parseTaskCommand(text, data?.people || []);
+    if (taskCmd) { addTask(taskCmd); return; }
     const stopCmd = parseStopCommand(text);
     if (stopCmd) {
       const live = TM.activeTimers({ timers }, Date.now());
@@ -296,7 +328,7 @@ export function TimerBar({ data, update, T, personId = "" }) {
     }
     const cmd = parseTimerCommand(text);
     if (cmd) add(cmd.durationMs, cmd.label);
-  }, [timers, apply, add]);
+  }, [timers, apply, add, data, addTask]);
 
   /* Both microphones run the same handler. A command heard at the screen and
      one heard by a satellite in the next room are the same instruction, and
@@ -314,7 +346,7 @@ export function TimerBar({ data, update, T, personId = "" }) {
 
       {voice.supported && (
         <button onClick={() => (voice.listening ? voice.stop() : voice.start())} className="tapfade"
-          aria-label={voice.listening ? "Stop listening" : "Set a timer by voice"}
+          aria-label={voice.listening ? "Stop listening" : "Set a timer or add a task by voice"}
           style={{
             flex: "0 0 auto", background: voice.listening ? "#7a1c12" : T.panelAlt,
             border: `1px solid ${voice.listening ? "#7a1c12" : T.line}`, borderRadius: 999,
@@ -356,6 +388,22 @@ export function TimerBar({ data, update, T, personId = "" }) {
           padding: "6px 10px", fontSize: 12.5, color: voice.error ? "#c2564a" : T.faint, maxWidth: 320,
         }}>
           {voice.error || `“${voice.heard}”`}
+        </div>
+      )}
+
+      {addedTask && (
+        <div role="status" style={{
+          position: "absolute", bottom: "100%", right: 12, marginBottom: voice.heard || voice.error ? 40 : 6, zIndex: 41,
+          background: T.panel, border: `1px solid ${T.brand}`, borderRadius: 10,
+          padding: "7px 10px", fontSize: 13, color: T.ink, maxWidth: 360,
+          display: "flex", alignItems: "center", gap: 10, boxShadow: "0 6px 20px rgba(0,0,0,.18)",
+        }}>
+          <span>
+            Added task <b>{addedTask.title}</b>
+            <span style={{ color: T.faint }}>{addedTask.who ? ` · ${addedTask.who}` : " · nobody yet"}</span>
+          </span>
+          <button onClick={undoTask} className="tapfade"
+            style={{ color: T.brand, fontWeight: 700, background: "none", border: "none", padding: 0 }}>Undo</button>
         </div>
       )}
 
