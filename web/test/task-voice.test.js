@@ -134,3 +134,36 @@ test("task words that a stop command would also match still make a task", () => 
     assert.ok(parse(said), said);
   }
 });
+
+/* ------------------------------------------ fields, from a Siri Shortcut --- */
+
+test("a task from separate fields, with each answer to 'who's it for'", () => {
+  const f = (fields) => V.taskFromFields(fields, PEOPLE, { now: NOW });
+
+  const sam = f({ task: "ring the plumber", person: "Sam" });
+  assert.deepEqual(sam, { title: "Ring the plumber", personId: "p-sam", assigned: "person", date: "2026-09-25" });
+
+  for (const later of ["later", "Decide later", "nobody", "anyone", "skip"]) {
+    const t = f({ task: "ring the plumber", person: later });
+    assert.equal(t.personId, "", later);
+    assert.equal(t.assigned, "nobody", later);
+  }
+
+  const blank = f({ task: "ring the plumber" });
+  assert.equal(blank.personId, "");
+  assert.equal(blank.assigned, "");
+
+  // A name nobody here has: the task still gets made, unassigned.
+  const stranger = f({ task: "ring the plumber", person: "Grandma" });
+  assert.equal(stranger.personId, "");
+  assert.equal(stranger.title, "Ring the plumber");
+});
+
+test("fields are tidied the way dictation leaves them", () => {
+  const f = (fields) => V.taskFromFields(fields, PEOPLE, { now: NOW });
+  assert.equal(f({ task: "to ring the plumber." }).title, "Ring the plumber");
+  assert.equal(f({ task: "  book   the MOT " }).title, "Book the MOT");
+  assert.equal(f({ task: "post it", when: "tomorrow" }).date, "2026-09-26");
+  assert.equal(f({ task: "   " }), null);
+  assert.equal(f({}), null);
+});

@@ -164,7 +164,19 @@ const ROUTES = [
   [/\/displays$/, () => []],
   [/\/proposals$/, () => []],
   [/\/integrations$/, () => []],
+  // The link a display would get from the server's voice endpoint. Off unless
+  // set with __hub.voice(url, token), which lets the sandbox subscribe to a
+  // real Home Assistant before any server hands one out.
+  [/\/home\/voice$/, () => sandboxVoiceLink()],
 ];
+
+const VOICE_KEY = "househub.sandbox.voice";
+function sandboxVoiceLink() {
+  try {
+    const v = JSON.parse(localStorage.getItem(VOICE_KEY) || "null");
+    return v && v.url && v.token ? { url: v.url, token: v.token, enabled: true } : null;
+  } catch { return null; }
+}
 
 export async function request(method, path) {
   await tick(null, 50);
@@ -341,6 +353,12 @@ if (typeof window !== "undefined") {
     },
     isDisplay: () => asDisplay,
     doc: readDoc,
+    /** Subscribe to a Home Assistant for voice commands, or pass nothing to stop. Reloads. */
+    voice: (url, token) => {
+      if (url && token) localStorage.setItem(VOICE_KEY, JSON.stringify({ url, token }));
+      else localStorage.removeItem(VOICE_KEY);
+      location.reload();
+    },
     // Edit the document by hand, e.g. __hub.set(d => { d.chores = []; })
     set: (fn) => { const d = readDoc(); fn(d); writeDoc(d); location.reload(); },
   };

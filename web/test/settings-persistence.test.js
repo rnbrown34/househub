@@ -104,3 +104,14 @@ test("choosing Nothing for one person is respected, not overridden", async () =>
   const data = { secondBlock: { all: { kind: "devices", picks: [] }, p2: { kind: "none", picks: [] } } };
   assert.equal(secondBlockFor(data, "p2").kind, "none");
 });
+
+/* Two screens that both heard one Home Assistant command each add the task,
+   under the same id taken from the event. The merge must leave one. */
+test("the same relayed task from two screens merges to one row", () => {
+  const task = { id: "ha-task-ctx-1", title: "Ring the plumber", date: "2026-09-25", personId: "", done: false };
+  const kitchen = { tasks: [{ id: "t1", title: "Old" }, task] };
+  const hallway = { tasks: [{ id: "t1", title: "Old" }, { ...task }] };
+  const out = mergeDocuments(kitchen, hallway);
+  assert.equal(out.tasks.filter((t) => t.title === "Ring the plumber").length, 1);
+  assert.equal(out.tasks.length, 2);
+});

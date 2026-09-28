@@ -25,7 +25,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { Play, Pause, Plus, X, RotateCcw, Mic, Timer as TimerIcon } from "lucide-react";
 import * as TM from "../lib/timers.js";
 import { parseDuration, parseTimerCommand, parseStopCommand, matchTimerByName } from "../lib/timer-voice.js";
-import { parseTaskCommand, taskFromCommand } from "../lib/task-voice.js";
+import { parseTaskCommand, taskFromCommand, taskFromFields } from "../lib/task-voice.js";
 import { uid } from "../lib/document.js";
 import { connectVoice } from "../lib/ha-voice.js";
 import * as session from "../lib/session.js";
@@ -133,7 +133,7 @@ function useSatelliteVoice(onCommand) {
         token: link.token,
         screenName: session.snapshot().displayName || "",
         onState: setState,
-        onCommand: (text) => cb.current && cb.current(text),
+        onCommand: (text, data, meta) => cb.current && cb.current(text, data, meta),
       });
     })();
     return () => { dead = true; conn && conn.close(); };
@@ -268,10 +268,15 @@ export function TimerBar({ data, update, T, personId = "" }) {
   const [openId, setOpenId] = useState(null);
   const active = TM.activeTimers(data, now);
 
-  const add = useCallback((ms, label) => update((d) => ({
-    ...d,
-    timers: [...(d.timers || []), TM.newTimer({ label, durationMs: ms, personId, now: Date.now() })],
-  })), [update, personId]);
+  /* An id is passed only for a command that came from Home Assistant, where
+     every listening screen hears the same event and must write the same row.
+     Skipping one that is already here covers the screen that loses the race;
+     the merge covers the two that write at once. */
+  const add = useCallback((ms, label, id) => update((d) => (
+    id && (d.timers || []).some((t) => t.id === id) ? d : {
+      ...d,
+      timers: [...(d.timers || []), TM.newTimer({ label, durationMs: ms, personId, now: Date.now(), id })],
+    })), [update, personId]);
 
   const apply = useCallback((id, fn) => update((d) => ({
     ...d,
@@ -292,11 +297,12 @@ export function TimerBar({ data, update, T, personId = "" }) {
     return () => clearTimeout(t);
   }, [addedTask]);
 
-  const addTask = useCallback((cmd) => {
+  const addTask = useCallback((cmd, id) => {
     const people = data?.people || [];
     const who = cmd.assigned === "self" ? personId : cmd.personId;
-    const task = taskFromCommand({ ...cmd, personId: who }, uid);
-    update((d) => ({ ...d, tasks: [...(d.tasks || []), task] }));
+    const task = taskFromCommand({ ...cmd, personId: who }, id ? () => id : uid);
+    update((d) => ((d.tasks || []).some((t) => t.id === task.id) ? d
+      : { ...d, tasks: [...(d.tasks || []), task] }));
     setAddedTask({ id: task.id, title: task.title, who: people.find((p) => p.id === who)?.name || "" });
   }, [data, update, personId]);
 
@@ -313,9 +319,9 @@ export function TimerBar({ data, update, T, personId = "" }) {
      timer. Stop then runs before start: "cancel the pasta timer" contains no
      duration, but "stop the 10 minute one" does, and reading that as a new
      timer would be a genuinely annoying way to fail. */
-  const handleSpoken = useCallback((text) => {
+  const handleSpoken = useCallback((text, id) => {
     const taskCmd = parseTaskCommand(text, data?.people || []);
-    if (taskCmd) { addTask(taskCmd); return; }
+    if (taskCmd) { addTask(taskCmd, id); return; }
     const stopCmd = parseStopCommand(text);
     if (stopCmd) {
       const live = TM.activeTimers({ timers }, Date.now());
@@ -327,14 +333,34 @@ export function TimerBar({ data, update, T, personId = "" }) {
       return;
     }
     const cmd = parseTimerCommand(text);
-    if (cmd) add(cmd.durationMs, cmd.label);
+    if (cmd) add(cmd.durationMs, cmd.label, id);
   }, [timers, apply, add, data, addTask]);
 
   /* Both microphones run the same handler. A command heard at the screen and
      one heard by a satellite in the next room are the same instruction, and
      giving them separate paths is how they end up behaving differently. */
   const voice = useVoice({ onResult: handleSpoken });
-  const satellite = useSatelliteVoice(handleSpoken);
+  /* From Home Assistant: fields when the sender split the question up (a Siri
+     Shortcut does), a sentence otherwise. Either way the event's own id
+     becomes the row's id -- see `add`. */
+  const handleRelayed = useCallback((text, fields = {}, { eventId = "" } = {}) => {
+    const id = (kind) => (eventId ? `ha-${kind}-${eventId}` : undefined);
+    if (String(fields.task ?? "").trim()) {
+      const cmd = taskFromFields(fields, data?.people || []);
+      if (cmd) addTask(cmd, id("task"));
+      return;
+    }
+    if (String(fields.timer ?? "").trim()) {
+      const raw = fields.timer;
+      const ms = typeof raw === "number" || /^\d+$/.test(String(raw).trim())
+        ? Number(raw) * 1000
+        : parseDuration(String(raw));
+      if (ms && ms > 0) add(ms, String(fields.label || ""), id("timer"));
+      return;
+    }
+    handleSpoken(text, id("cmd"));
+  }, [data, addTask, add, handleSpoken]);
+  const satellite = useSatelliteVoice(handleRelayed);
 
   const open = active.find((t) => t.id === openId) || null;
 

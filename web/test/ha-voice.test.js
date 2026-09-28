@@ -159,3 +159,51 @@ test("a dropped connection is retried", () => {
     resolve();
   }, 30));
 });
+
+/* ------------------------------------------ fields, from a Siri Shortcut --- */
+
+const connected = (onCommand, screenName = "Kitchen wall") => {
+  const s = fakeSocket();
+  HV.connectVoice({ url: "http://ha.local:8123", token: "T", screenName, makeSocket: () => s, onCommand });
+  s.say({ type: "auth_required" });
+  s.say({ type: "auth_ok" });
+  return s;
+};
+
+test("a task sent as fields reaches the handler with no sentence at all", () => {
+  const got = [];
+  const s = connected((text, data, meta) => got.push({ text, data, meta }));
+  s.say({ type: "event", event: {
+    data: { task: "Ring the plumber", person: "Sam" },
+    context: { id: "01J9ZCTX00000000000000000A" },
+  } });
+  assert.equal(got.length, 1, "fields alone are enough; a Shortcut has no sentence to send");
+  assert.equal(got[0].text, "");
+  assert.equal(got[0].data.task, "Ring the plumber");
+  assert.equal(got[0].meta.eventId, "01J9ZCTX00000000000000000A");
+});
+
+test("a timer sent as fields reaches the handler too", () => {
+  const got = [];
+  const s = connected((text, data) => got.push(data));
+  s.say({ type: "event", event: { data: { timer: 600, label: "pasta" }, context: { id: "x" } } });
+  assert.deepEqual(got, [{ timer: 600, label: "pasta" }]);
+});
+
+test("an event with neither a sentence nor fields is ignored", () => {
+  const got = [];
+  const s = connected((t) => got.push(t));
+  s.say({ type: "event", event: { data: { person: "Sam" }, context: { id: "x" } } });
+  s.say({ type: "event", event: { data: { task: "   " }, context: { id: "y" } } });
+  assert.equal(got.length, 0);
+});
+
+test("every screen hearing one broadcast gets the same event id", () => {
+  // Which is what lets them write one task between them rather than one each.
+  const ids = [];
+  const a = connected((t, d, m) => ids.push(m.eventId), "Kitchen wall");
+  const b = connected((t, d, m) => ids.push(m.eventId), "Hallway");
+  const ev = { type: "event", event: { data: { task: "Post the letter" }, context: { id: "ctx-1" } } };
+  a.say(ev); b.say(ev);
+  assert.deepEqual(ids, ["ctx-1", "ctx-1"]);
+});

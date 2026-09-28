@@ -70,6 +70,20 @@ export const textOf = (eventData) =>
   String(eventData?.text || eventData?.command || eventData?.transcript || "").trim();
 
 /**
+ * Whether an event carries a command in fields rather than a sentence.
+ *
+ * A Siri Shortcut has already asked "what's the task?" and "who's it for?" as
+ * separate questions, so it can send them as separate fields -- and a field
+ * cannot be misparsed the way a sentence can. Free text still works; this is
+ * the better path when the sender can use it.
+ *
+ *   { task: "Ring the plumber", person: "Sam" }       person may be "later"
+ *   { timer: "10 minutes", label: "pasta" }           or timer: 600 (seconds)
+ */
+export const isStructured = (eventData) =>
+  Boolean(String(eventData?.task ?? "").trim() || String(eventData?.timer ?? "").trim());
+
+/**
  * Hold a subscription to one household's Home Assistant.
  *
  * `makeSocket` is injected so this can be driven by a fake in tests; in the app
@@ -124,7 +138,14 @@ export function connectVoice({
         const data = msg.event?.data || {};
         if (!isForThisScreen(data, screenName)) return;
         const text = textOf(data);
-        if (text) { try { onCommand && onCommand(text, data); } catch (e) { /* caller's problem */ } }
+        /* Home Assistant stamps every event with a context id. It is passed on
+           so that every screen that hears one broadcast command can give what
+           it creates the same id -- which the document merge then collapses to
+           one row, instead of one task per listening screen. */
+        const eventId = String(msg.event?.context?.id || "");
+        if (text || isStructured(data)) {
+          try { onCommand && onCommand(text, data, { eventId }); } catch (e) { /* caller's problem */ }
+        }
       }
     };
 

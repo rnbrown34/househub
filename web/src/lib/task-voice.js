@@ -150,6 +150,35 @@ export function parseTaskCommand(text, people = [], { now = new Date() } = {}) {
   return { title, personId, assigned, date: ymd(d) };
 }
 
+/* Answers to "who's it for?" that mean "not decided yet". */
+const LATER = new Set(["", "later", "decide later", "nobody", "no one", "none",
+  "anyone", "anybody", "everyone", "everybody", "whoever", "skip", "unassigned"]);
+
+/**
+ * A task from separate fields, as a Siri Shortcut sends it.
+ *
+ * Same result shape as parseTaskCommand. A person that matches nobody leaves
+ * the task unassigned rather than failing: the task is what was asked for,
+ * and who does it can be sorted out in the app.
+ */
+export function taskFromFields({ task, person, when } = {}, people = [], { now = new Date() } = {}) {
+  const words = String(task ?? "").replace(/\s+/g, " ").trim()
+    .replace(/^(?:to\s+)/i, "").replace(/[.!?]+$/, "");
+  if (!words) return null;
+  const title = (words[0].toUpperCase() + words.slice(1)).slice(0, 120);
+
+  const who = normalise(person);
+  let personId = "", assigned = "";
+  if (!LATER.has(who)) {
+    const p = matchPerson(people, who);
+    if (p) { personId = p.id; assigned = "person"; }
+  } else if (who) assigned = "nobody";
+
+  const d = new Date(now);
+  d.setDate(d.getDate() + (DAYS[normalise(when)] || 0));
+  return { title, personId, assigned, date: ymd(d) };
+}
+
 /** The document's task shape, as TaskModal would have written it. */
 export function taskFromCommand(cmd, uid) {
   return {
