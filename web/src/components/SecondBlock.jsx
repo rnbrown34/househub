@@ -198,11 +198,16 @@ function BlockCamera({ picks, T }) {
   const [cameras, setCameras] = useState(null);
   const [tick, setTick] = useState(0);
 
+  /* The list is re-read, not just the stills: a camera hidden in Settings has
+     to leave a tablet that has been running for a week, and a Home Assistant
+     that was down when the tablet woke must not leave the row empty for good. */
   useEffect(() => {
     let live = true;
-    loadCameras().then((cs) => { if (live) setCameras(cs); });
+    const load = () => loadCameras().then((cs) => { if (live) setCameras(cs); });
+    load();
+    const list = setInterval(load, 30000);
     const t = setInterval(() => setTick((n) => n + 1), 4000);
-    return () => { live = false; clearInterval(t); };
+    return () => { live = false; clearInterval(list); clearInterval(t); };
   }, []);
 
   if (!cameras) return <p style={{ color: T.faint, fontSize: 13 }}>Loading cameras…</p>;
@@ -238,8 +243,11 @@ function BlockDevices({ picks, T }) {
   const [entities, setEntities] = useState(null);
   const [error, setError] = useState(null);
 
+  /* The devices view, not the raw entity list, for the same reason as the
+     cameras: it is where the household's names and "Hide" are applied, and a
+     hidden light must neither show on Today nor be switchable from it. */
   const load = useCallback(() => {
-    session.homeEntities().then(setEntities).catch(() => setEntities([]));
+    session.homeDevices().then((d) => setEntities(d?.entities || [])).catch(() => setEntities([]));
   }, []);
   useEffect(() => { load(); const t = setInterval(load, 6000); return () => clearInterval(t); }, [load]);
 
@@ -314,7 +322,7 @@ export default function SecondBlock({ data, update, filter, theme: T }) {
  * An empty selection still means "all", which keeps the row working for anyone
  * who never opens this and matches what the block already did.
  */
-function PickList({ kind, picks, onToggle, T }) {
+function PickList({ kind, picks, onToggle, onClear, T }) {
   const [options, setOptions] = useState(null);
 
   useEffect(() => {
@@ -328,8 +336,8 @@ function PickList({ kind, picks, onToggle, T }) {
         done(cs.map((c) => ({ id: c.id, name: both && c.source === "camwatch" ? `${c.name} (CamWatch)` : c.name })));
       });
     } else {
-      session.homeEntities()
-        .then((es) => done((es || [])
+      session.homeDevices()
+        .then((d) => done((d?.entities || [])
           .filter((e) => ["light", "switch", "fan", "cover"].includes(e.domain))
           .map((e) => ({ id: e.entityId, name: e.name }))))
         .catch(() => done([]));
@@ -355,6 +363,14 @@ function PickList({ kind, picks, onToggle, T }) {
         {missing
           ? "None of the chosen ones are available — tap to choose again"
           : live.length ? `Showing ${live.length} of ${options.length}` : "Showing all — tap to choose"}
+        {/* Without this, a selection whose last live pick is unticked keeps its
+            stale ids and the row shows nothing, with no way back to "all". */}
+        {picks.length > 0 && onClear && (
+          <button type="button" onClick={onClear} className="tapfade"
+            style={{ marginLeft: 8, color: T.brand, fontWeight: 700, background: "none", border: "none", padding: 0, fontSize: 12 }}>
+            Show all
+          </button>
+        )}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
         {options.map((o) => {
@@ -392,6 +408,11 @@ export function SecondBlockSettings({ data, update, theme: T, people }) {
         [filterId]: { kind, picks: prev.kind === kind ? prev.picks : [] },
       },
     };
+  });
+
+  const clearPicks = (filterId) => update((d) => {
+    const prev = secondBlockFor(d, filterId);
+    return { ...d, secondBlock: { ...(d.secondBlock || {}), [filterId]: { kind: prev.kind, picks: [] } } };
   });
 
   const togglePick = (filterId, id) => update((d) => {
@@ -437,6 +458,7 @@ export function SecondBlockSettings({ data, update, theme: T, people }) {
               kind={secondBlockFor(data, id).kind}
               picks={secondBlockFor(data, id).picks}
               onToggle={(pid) => togglePick(id, pid)}
+              onClear={() => clearPicks(id)}
               T={T}
             />
           )}

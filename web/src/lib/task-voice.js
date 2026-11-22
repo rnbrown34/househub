@@ -44,7 +44,10 @@ const LEADS = [
    is kept for the tail parser rather than defeating the match. */
 const LIST_WORD = "(?:task|tasks|to[\\s-]?do|to[\\s-]?dos|todo|todos)(?:\\s+list)?";
 const WHOSE = "(?:(?:the|my|our)\\s+|(\\S+?)'s\\s+)?";
-const TO_LIST = new RegExp(`^(?:add|put)\\s+(.+?)\\s+(?:to|on(?:to)?)\\s+${WHOSE}${LIST_WORD}(?:[\\s,]+(.*))?$`);
+/* What may follow "list": only endings the tail parser understands. Anything
+   else ("... to the to-do pile") means this was not a to-do list at all. */
+const TAIL_ITEM = "(?:please|today|tonight|tomorrow|(?:for|due|by)\\s+\\S+(?:\\s+\\S+)?)";
+const TO_LIST = new RegExp(`^(?:add|put)\\s+(.+?)\\s+(?:to|on(?:to)?)\\s+${WHOSE}${LIST_WORD}(?:[\\s,]+(${TAIL_ITEM}(?:[\\s,]+${TAIL_ITEM})?))?$`);
 const LIST_FIRST = new RegExp(`^(?:add|put)\\s+(?:to|on(?:to)?)\\s+${WHOSE}${LIST_WORD}[\\s,:-]+(.+)$`);
 
 const POLITE = /^(?:(?:hey|ok|okay)\s+)?(?:(?:house\s*hub|hub|house)[\s,]+)?(?:(?:please|can you|could you|would you)\s+)*/;
@@ -92,17 +95,24 @@ function whoIs(people, spoken) {
 }
 
 /* "for Sam to ring the plumber", "for tomorrow: book the MOT". A name at the
-   front, followed by the task, can only be the assignee. Tries a two-word
-   name before a one-word one so "for Alex Brown to …" keeps its surname out
-   of the title. */
+   front only counts when what follows is plainly the task: "to …", or a
+   colon or comma from a keyboard. Without that, "for Sam and Alex to …" and
+   "for Sam's birthday …" are about Sam, not for Sam, and a guess there cuts
+   the sentence in half. Possessives never count here for the same reason.
+   Tries a two-word name before a one-word one, so "for Alex Brown to …"
+   keeps its surname out of the title. */
 function peelHead(body, people) {
   const words = body.split(" ");
   if (words[0] !== "for" || words.length < 3) return null;
   for (const n of [2, 1]) {
-    const spoken = words.slice(1, 1 + n).join(" ").replace(/[,:]+$/, "");
+    const spokenRaw = words.slice(1, 1 + n).join(" ");
+    const punctuated = /[,:]$/.test(spokenRaw);
+    const spoken = spokenRaw.replace(/[,:]+$/, "");
     let rest = words.slice(1 + n);
-    if (rest[0] === "to") rest = rest.slice(1);
-    if (!rest.length) continue;
+    const toFollows = rest[0] === "to";
+    if (toFollows) rest = rest.slice(1);
+    if (!rest.length || !(toFollows || punctuated)) continue;
+    if (/'s$|s'$/.test(spoken)) continue;
     if (DAYS[spoken] !== undefined) return { rest: rest.join(" "), day: DAYS[spoken] };
     const who = whoIs(people, spoken);
     if (who) return { rest: rest.join(" "), ...who };

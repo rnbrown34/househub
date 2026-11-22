@@ -253,10 +253,18 @@ test("a spoken task never silences a running timer, parsed or not", needs, async
       await render();
     };
 
-    await speak("chuck clear the gutters on the to-do pile");
+    await speak("add the clear the gutters thing to the to-do pile");
     assert.equal(TM.timerState(box.data.timers[0]), "running", "the pasta timer is untouched");
     assert.equal(box.data.tasks.length, 0);
     assert.match(dom.window.document.body.textContent, /Couldn.t tell what the task was/);
+
+    await speak("put turn off the outside tap on the list");
+    assert.equal(TM.timerState(box.data.timers[0]), "running", "an 'add'/'put' sentence is never a stop command");
+
+    // and a timer that mentions a to-do still starts, as it does on beta
+    await speak("set a timer for 20 minutes to do homework");
+    assert.equal(box.data.timers.length, 2, "the homework timer started");
+    assert.equal(TM.timerState(box.data.timers[0]), "running");
 
     await speak("add a task for sam to clear the gutters");
     assert.equal(TM.timerState(box.data.timers[0]), "running", "still untouched");

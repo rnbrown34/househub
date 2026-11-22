@@ -177,8 +177,8 @@ test("fields are tidied the way dictation leaves them", () => {
 test("a name straight after 'add a task' assigns it, which is how people say it", () => {
   for (const said of [
     "add a task for sam to ring the plumber",
-    "add a task for sam ring the plumber",
     "new task for sam: ring the plumber",
+    "add a task for sam, ring the plumber",
   ]) {
     const got = parse(said);
     assert.equal(got.title, "Ring the plumber", said);
@@ -233,4 +233,20 @@ test("to-do list phrasings people actually use are tasks, not near-misses", () =
 
 test("a curly apostrophe from dictation reads like a straight one", () => {
   assert.equal(parse("add clear the gutters to sam’s to-do list").personId, "p-sam");
+});
+
+test("a name at the front counts only when the task plainly follows it", () => {
+  // Found in the second review: a bare "for Sam" at the front took sentences
+  // that are about Sam, not for Sam, and cut them in half.
+  const both = parse("add a task for sam and alex to tidy the garage");
+  assert.equal(both.title, "For sam and alex to tidy the garage");
+  assert.equal(both.personId, "");
+
+  const birthday = parse("add a task for sam's birthday buy a cake");
+  assert.equal(birthday.title, "For sam's birthday buy a cake");
+  assert.equal(birthday.personId, "");
+
+  const noTo = parse("add a task for sam ring the plumber");
+  assert.equal(noTo.title, "For sam ring the plumber", "without 'to' it is left whole, to assign in the app");
+  assert.equal(noTo.personId, "");
 });

@@ -160,3 +160,63 @@ test("nothing connected says so, in words that fit a shared screen", needs, asyn
   const { text } = await renderRow({ display: true, devices: HA_UNCONFIGURED, camwatch: NOT_CONNECTED });
   assert.match(text, /No cameras to show on this screen/);
 });
+
+test("the lights row reads the devices view too, so hidden lights stay off Today", needs, async () => {
+  globalThis.__cams = {
+    asked: [],
+    devices: { entities: [{ entityId: "light.hall", name: "Hall", domain: "light", state: "on" }] },
+    entities: [
+      { entityId: "light.hall", name: "Hall ceiling (Hue)", domain: "light", state: "on" },
+      { entityId: "light.bedroom", name: "Bedroom", domain: "light", state: "off" },
+    ],
+  };
+  const React = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const { act } = await import("react");
+  const { SecondBlock } = await load();
+  const el = dom.window.document.getElementById("root");
+  el.innerHTML = "";
+  const root = createRoot(el);
+  const data = { secondBlock: { all: { kind: "devices", picks: [] } } };
+  try {
+    await act(async () => { root.render(React.createElement(SecondBlock, { data, update: () => {}, filter: "all", theme: T })); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    const names = [...el.querySelectorAll("button")].map((b) => b.textContent);
+    assert.equal(names.length, 1, names.join(" | "));
+    assert.match(names[0], /^Hall/);
+    assert.ok(!globalThis.__cams.asked.includes("homeEntities"));
+  } finally {
+    await act(async () => { root.unmount(); });
+  }
+});
+
+test("a stale camera selection can be put back to 'show all' from the picker", needs, async () => {
+  globalThis.__cams = {
+    asked: [],
+    devices: { entities: [{ entityId: "camera.garden", name: "Garden", domain: "camera" }] },
+    camwatch: NOT_CONNECTED,
+  };
+  const React = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const { act } = await import("react");
+  const { SecondBlockSettings } = await load();
+  const box = { data: { secondBlock: { all: { kind: "camera", picks: ["camera.old_driveway"] } } } };
+  const update = (fn) => { box.data = fn({ ...box.data }); };
+  const el = dom.window.document.getElementById("root");
+  el.innerHTML = "";
+  const root = createRoot(el);
+  const render = async () => act(async () => {
+    root.render(React.createElement(SecondBlockSettings, { data: box.data, update, theme: T, people: [] }));
+  });
+  try {
+    await render();
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    assert.match(el.textContent, /None of the chosen ones are available/);
+    const showAll = [...el.querySelectorAll("button")].find((b) => b.textContent.trim() === "Show all");
+    assert.ok(showAll, "there is a way back to all");
+    await act(async () => { showAll.click(); });
+    assert.deepEqual(box.data.secondBlock.all, { kind: "camera", picks: [] });
+  } finally {
+    await act(async () => { root.unmount(); });
+  }
+});

@@ -31,8 +31,13 @@ import { connectVoice, relayKey } from "../lib/ha-voice.js";
 import * as session from "../lib/session.js";
 import { loadVoiceLink } from "../api.js";
 
-/* Words that mean a sentence is about a task, parsed or not. */
-const TASK_WORD = /\b(?:tasks?|to[\s-]?dos?|todos?)\b/i;
+/* A sentence that starts by adding something is never a stop command, however
+   many "clear"s and "off"s it contains: "add turn off the tap to the to-do
+   pile" must not silence the pasta. Keyed on the opening verb rather than on
+   the word "task", which also turns up in ordinary timers ("set a timer for 20
+   minutes to do homework"). */
+const ADDING = /^\W*(?:(?:hey|ok|okay)\s+)?(?:(?:house\s*hub|hub|house)[\s,]+)?(?:(?:please|can you|could you|would you)\s+)*(?:add|put|create|make|new)\b/i;
+const TASK_WORD = /\b(?:tasks?|to[\s-]?dos?)\b/i;
 
 /* Quick durations, in minutes. Chosen for a kitchen rather than for round
    numbers: 3 is tea, 12 is pasta, 25 is a pomodoro and a tray of vegetables. */
@@ -328,11 +333,7 @@ export function TimerBar({ data, update, T, personId = "" }) {
   const handleSpoken = useCallback((text, id) => {
     const taskCmd = parseTaskCommand(text, data?.people || []);
     if (taskCmd) { addTask(taskCmd, id); return; }
-    /* A sentence about a task that the grammar did not follow must stop here.
-       Falling through, its "clear" or "off" reads as a stop command, and the
-       nearest timer quietly never rings. */
-    if (TASK_WORD.test(text)) { setAddedTask({ failed: true }); return; }
-    const stopCmd = parseStopCommand(text);
+    const stopCmd = ADDING.test(text) ? null : parseStopCommand(text);
     if (stopCmd) {
       const live = TM.activeTimers({ timers }, Date.now());
       if (stopCmd.all) { live.forEach((t) => apply(t.id, TM.silenceTimer)); return; }
@@ -343,7 +344,10 @@ export function TimerBar({ data, update, T, personId = "" }) {
       return;
     }
     const cmd = parseTimerCommand(text);
-    if (cmd) add(cmd.durationMs, cmd.label, id);
+    if (cmd) { add(cmd.durationMs, cmd.label, id); return; }
+    /* Asked to add a task, and neither a task nor a timer came of it: say so,
+       rather than a silence that reads as "done". */
+    if (ADDING.test(text) && TASK_WORD.test(text)) setAddedTask({ failed: true });
   }, [timers, apply, add, data, addTask]);
 
   /* Both microphones run the same handler. A command heard at the screen and
