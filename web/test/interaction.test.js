@@ -44,7 +44,11 @@ if (ready) {
     { pretendToBeVisual: true, url: "http://localhost/" });
   for (const k of ["window", "document", "navigator", "HTMLElement", "Node", "Event",
                    "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame"]) {
-    if (dom.window[k] !== undefined) globalThis[k] = dom.window[k];
+    /* defineProperty, not assignment: Node 21+ gives globalThis a read-only
+       `navigator`, and assigning to it throws before a single test runs. */
+    if (dom.window[k] !== undefined) {
+      Object.defineProperty(globalThis, k, { value: dom.window[k], configurable: true, writable: true });
+    }
   }
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 }

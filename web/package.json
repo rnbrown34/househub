@@ -9,7 +9,7 @@
     "dev:sandbox": "vite --mode sandbox",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test test/",
+    "test": "node --test",
     "fixtures": "python3 test/fixtures/make-legacy-db.py",
     "pretest": "npm run fixtures --silent || echo '[fixtures] skipped (needs python3); legacy-import tests will skip'"
   },
