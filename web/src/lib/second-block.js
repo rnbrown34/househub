@@ -48,3 +48,21 @@ export function isInherited(data, filter) {
   const all = data?.secondBlock || data?.mealsSecondRow || {};
   return Boolean(filter && filter !== "all" && all[filter] === undefined && all.all);
 }
+
+/**
+ * Which of the available things a row with this selection shows.
+ *
+ * An empty selection means "all". A non-empty one is taken literally and never
+ * widened: if a household chose only the driveway camera and that camera goes
+ * away, the row says so rather than showing every other camera, some of which
+ * they deliberately kept off a screen in the hall. `missing` is true when
+ * something was chosen and none of it is available, so the row can say that
+ * instead of looking empty for no reason.
+ */
+export function pickedFrom(options, picks) {
+  const list = options || [];
+  const chosen = Array.isArray(picks) ? picks : [];
+  if (!chosen.length) return { shown: list, live: [], missing: false };
+  const live = chosen.filter((id) => list.some((o) => o.id === id));
+  return { shown: list.filter((o) => live.includes(o.id)), live, missing: live.length === 0 };
+}

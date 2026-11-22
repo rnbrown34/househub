@@ -331,7 +331,10 @@ export const withdrawProposal = ok;
 
 export const homeEntities = async () => SANDBOX_CAMERAS.map(({ sky, ground, ...e }) => e);
 export const homeControl = ok;
-export const homeDevices = async () => ({ entities: [], groups: [], rooms: [] });
+export const homeDevices = async () => {
+  const entities = SANDBOX_CAMERAS.map(({ sky, ground, ...e }) => e);
+  return { entities, groups: [{ room: null, entities }], rooms: [] };
+};
 export const saveHomeDevices = ok;
 
 /* ----------------------------------------------------------------- console --- */

@@ -115,3 +115,25 @@ test("the same relayed task from two screens merges to one row", () => {
   assert.equal(out.tasks.filter((t) => t.title === "Ring the plumber").length, 1);
   assert.equal(out.tasks.length, 2);
 });
+
+/* A camera selection is taken literally: if what was chosen goes away, the row
+   says so rather than widening to every camera, some of which the household
+   kept off the screen in the hall on purpose. */
+test("a camera selection never widens to every camera when its pick goes missing", async () => {
+  const { pickedFrom } = await import("../src/lib/second-block.js");
+  const cams = [{ id: "camera.driveway" }, { id: "camera.kids" }, { id: "cw-porch" }];
+
+  assert.deepEqual(pickedFrom(cams, []).shown.map((c) => c.id), ["camera.driveway", "camera.kids", "cw-porch"]);
+
+  const one = pickedFrom(cams, ["cw-porch"]);
+  assert.deepEqual(one.shown.map((c) => c.id), ["cw-porch"]);
+  assert.equal(one.missing, false);
+
+  const gone = pickedFrom(cams, ["camera.old_driveway"]);
+  assert.deepEqual(gone.shown, [], "nothing shown, not everything");
+  assert.equal(gone.missing, true);
+
+  const partly = pickedFrom(cams, ["camera.old_driveway", "camera.driveway"]);
+  assert.deepEqual(partly.shown.map((c) => c.id), ["camera.driveway"]);
+  assert.deepEqual(partly.live, ["camera.driveway"]);
+});

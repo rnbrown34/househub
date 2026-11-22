@@ -14,7 +14,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import * as session from "../lib/session.js";
 import { suggestDateIdea } from "../lib/checkin.js";
-import { BLOCK_KINDS, PICKABLE, secondBlockFor, isInherited } from "../lib/second-block.js";
+import { BLOCK_KINDS, PICKABLE, secondBlockFor, isInherited, pickedFrom } from "../lib/second-block.js";
 
 /* The shape of this setting lives in lib/second-block.js so it can be tested
    without a DOM; re-exported here so existing importers are unaffected. */
@@ -164,44 +164,59 @@ function BlockDateJar({ data, update, T }) {
 }
 
 /**
- * Live camera stills from the household's Home Assistant.
+ * Every camera this screen may show on Today, from either source.
  *
- * This used to read CamWatch, which left the row empty for a household whose
- * cameras live in Home Assistant -- the Home tab showed them and Today said
- * "Connect CamWatch". Home Assistant's camera endpoints already exist for
- * members and displays alike, and the server only serves the cameras the
- * household chose to show, so the row needs nothing new from it.
+ * Home Assistant cameras come from the devices view, not the raw entity list,
+ * because that is where the household's own names and "Hide from the Home tab
+ * and displays" are applied; reading the raw list put hidden cameras on the
+ * hallway tablet under Home Assistant's names. CamWatch cameras come from
+ * CamWatch, for households that run it -- the Today row was the only place
+ * CamWatch cameras appeared, so dropping it would have dropped CamWatch.
+ *
+ * Each source fails on its own: a household with only one of them connected
+ * gets an error from the other, which must not empty the row.
  */
-const haCameras = (entities) => (entities || []).filter((e) => e.domain === "camera");
+function loadCameras() {
+  const ha = session.homeDevices()
+    .then((d) => (d?.entities || [])
+      .filter((e) => e.domain === "camera")
+      .map((e) => ({ id: e.entityId, name: e.name, source: "ha", url: () => session.cameraUrl(e.entityId) })))
+    .catch(() => []);
+  const camwatch = session.listCameras()
+    .then((cs) => (cs || [])
+      .map((c) => ({ id: c.id, name: c.name, source: "camwatch", url: () => session.cameraSnapshotUrl(c.id) })))
+    .catch(() => []);
+  return Promise.all([ha, camwatch]).then(([a, b]) => [...a, ...b]);
+}
 
-/* Picks saved against a different camera source are ids that no longer exist.
-   Filtering by them would show nothing, which reads as "broken"; ignoring the
-   stale ones falls back to "all", which is what an empty selection means. */
-const livePicks = (picks, ids) => picks.filter((p) => ids.includes(p));
+const NO_CAMERAS = () => (session.isDisplay()
+  ? "No cameras to show on this screen."
+  : "No cameras yet. Choose some in Settings → Home Assistant, or connect CamWatch.");
+const PICKED_GONE = "The cameras chosen for this row are not available right now.";
 
 function BlockCamera({ picks, T }) {
   const [cameras, setCameras] = useState(null);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
-    session.homeEntities().then((es) => setCameras(haCameras(es))).catch(() => setCameras([]));
+    let live = true;
+    loadCameras().then((cs) => { if (live) setCameras(cs); });
     const t = setInterval(() => setTick((n) => n + 1), 4000);
-    return () => clearInterval(t);
+    return () => { live = false; clearInterval(t); };
   }, []);
 
   if (!cameras) return <p style={{ color: T.faint, fontSize: 13 }}>Loading cameras…</p>;
-  const chosen = livePicks(picks, cameras.map((c) => c.entityId));
-  const shown = chosen.length ? cameras.filter((c) => chosen.includes(c.entityId)) : cameras;
+  const { shown, missing } = pickedFrom(cameras, picks);
   if (!shown.length) {
-    return <p style={{ color: T.faint, fontSize: 13 }}>No cameras. Choose some in Settings → Home Assistant.</p>;
+    return <p style={{ color: T.faint, fontSize: 13 }}>{missing ? PICKED_GONE : NO_CAMERAS()}</p>;
   }
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))", gap: 8 }}>
       {shown.slice(0, 6).map((c) => {
-        const url = session.cameraUrl(c.entityId);
+        const url = c.url();
         return (
-          <div key={c.entityId} style={{ borderRadius: 10, overflow: "hidden", background: "#1B1720", aspectRatio: "16/9", position: "relative" }}>
+          <div key={`${c.source}:${c.id}`} style={{ borderRadius: 10, overflow: "hidden", background: "#1B1720", aspectRatio: "16/9", position: "relative" }}>
             <img
               src={`${url}${url.includes("?") ? "&" : "?"}t=${tick}`}
               alt={c.name}
@@ -305,12 +320,20 @@ function PickList({ kind, picks, onToggle, T }) {
   useEffect(() => {
     let live = true;
     const done = (list) => { if (live) setOptions(list); };
-    const domains = kind === "camera" ? ["camera"] : ["light", "switch", "fan", "cover"];
-    session.homeEntities()
-      .then((es) => done((es || [])
-        .filter((e) => domains.includes(e.domain))
-        .map((e) => ({ id: e.entityId, name: e.name }))))
-      .catch(() => done([]));
+    if (kind === "camera") {
+      /* The same list the row draws from, so a camera can only be chosen if
+         the row could show it. Labelled by source only when both are present. */
+      loadCameras().then((cs) => {
+        const both = cs.some((c) => c.source === "ha") && cs.some((c) => c.source === "camwatch");
+        done(cs.map((c) => ({ id: c.id, name: both && c.source === "camwatch" ? `${c.name} (CamWatch)` : c.name })));
+      });
+    } else {
+      session.homeEntities()
+        .then((es) => done((es || [])
+          .filter((e) => ["light", "switch", "fan", "cover"].includes(e.domain))
+          .map((e) => ({ id: e.entityId, name: e.name }))))
+        .catch(() => done([]));
+    }
     return () => { live = false; };
   }, [kind]);
 
@@ -319,17 +342,19 @@ function PickList({ kind, picks, onToggle, T }) {
     return (
       <p style={{ color: T.faint, fontSize: 12 }}>
         {kind === "camera"
-          ? "No cameras yet. Choose some in Settings → Home Assistant."
+          ? "No cameras yet. Choose some in Settings → Home Assistant, or connect CamWatch."
           : "No devices yet. Connect Home Assistant in Settings."}
       </p>
     );
   }
 
-  const live = livePicks(picks, options.map((o) => o.id));
+  const { live, missing } = pickedFrom(options, picks);
   return (
     <div style={{ width: "100%" }}>
-      <div style={{ color: T.faint, fontSize: 12, marginBottom: 4 }}>
-        {live.length ? `Showing ${live.length} of ${options.length}` : "Showing all — tap to choose"}
+      <div style={{ color: missing ? "#8a3d12" : T.faint, fontSize: 12, marginBottom: 4 }}>
+        {missing
+          ? "None of the chosen ones are available — tap to choose again"
+          : live.length ? `Showing ${live.length} of ${options.length}` : "Showing all — tap to choose"}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
         {options.map((o) => {
