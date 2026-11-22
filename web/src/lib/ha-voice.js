@@ -84,6 +84,30 @@ export const isStructured = (eventData) =>
   Boolean(String(eventData?.task ?? "").trim() || String(eventData?.timer ?? "").trim());
 
 /**
+ * A row id for something a relayed command creates, the same on every screen.
+ *
+ * Every screen that hears one broadcast must write the same row, so the merge
+ * collapses them -- hence Home Assistant's context id. But one automation or
+ * script run gives every event it fires the same context id, so the id alone
+ * would make "Bins out" and "Feed the cat" from one run the same row, and the
+ * second would vanish. The command's own content is folded in: the same
+ * command heard twice is one row, two different commands are two.
+ *
+ * Returns "" when the event had no context id, and the caller then makes an
+ * ordinary random id, as for a command spoken at the screen.
+ */
+export function relayKey(eventId, text, fields = {}) {
+  if (!eventId) return "";
+  const canon = JSON.stringify([
+    String(text || ""), fields.task ?? "", fields.person ?? "", fields.when ?? "",
+    fields.timer ?? "", fields.label ?? "", fields.display ?? fields.target ?? "",
+  ]);
+  let h = 5381;
+  for (let i = 0; i < canon.length; i++) h = ((h * 33) ^ canon.charCodeAt(i)) >>> 0;
+  return `${eventId}-${h.toString(36)}`;
+}
+
+/**
  * Hold a subscription to one household's Home Assistant.
  *
  * `makeSocket` is injected so this can be driven by a fake in tests; in the app

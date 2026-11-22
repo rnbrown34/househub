@@ -216,6 +216,59 @@ test("the microphone is offered only where the browser has one", needs, async ()
   await act(async () => { root.unmount(); });
 });
 
+test("a spoken task never silences a running timer, parsed or not", needs, async () => {
+  // Found in review: to-do phrasings the task grammar missed fell through to
+  // the stop parser, whose "clear" and "off" quietly silenced the pasta.
+  const { TimerBar } = await bundle("src/components/TimersPanel.jsx", ["TimerBar"]);
+  const React = (await import("react")).default;
+  const { createRoot } = await import("react-dom/client");
+  const { act } = await import("react");
+
+  let say = "";
+  class FakeRec {
+    start() { setTimeout(() => {
+      const r = [{ transcript: say }]; r.isFinal = true;
+      this.onresult && this.onresult({ results: [r] });
+      this.onend && this.onend();
+    }, 0); }
+    stop() {} abort() {}
+  }
+  dom.window.SpeechRecognition = FakeRec;
+  const root = createRoot(mountPoint());
+  try {
+    const now = Date.now();
+    const { box, update } = makeDoc([TM.newTimer({ id: "p", label: "Pasta", durationMs: mins(12), now })]);
+    box.data.people = [{ id: "p-sam", name: "Sam" }];
+    box.data.tasks = [];
+    const render = async () => act(async () => {
+      root.render(React.createElement(TimerBar, { data: box.data, update, T }));
+    });
+    await render();
+    const mic = () => [...dom.window.document.querySelectorAll("button")]
+      .find((b) => (b.getAttribute("aria-label") || "").includes("voice"));
+    const speak = async (text) => {
+      say = text;
+      await act(async () => { mic().click(); });
+      await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+      await render();
+    };
+
+    await speak("chuck clear the gutters on the to-do pile");
+    assert.equal(TM.timerState(box.data.timers[0]), "running", "the pasta timer is untouched");
+    assert.equal(box.data.tasks.length, 0);
+    assert.match(dom.window.document.body.textContent, /Couldn.t tell what the task was/);
+
+    await speak("add a task for sam to clear the gutters");
+    assert.equal(TM.timerState(box.data.timers[0]), "running", "still untouched");
+    assert.deepEqual(box.data.tasks.map((t) => [t.title, t.personId]), [["Clear the gutters", "p-sam"]]);
+    assert.match(dom.window.document.body.textContent, /Added task Clear the gutters · Sam/);
+  } finally {
+    // Unmount even on failure: a mounted TimerBar's ticking keeps the run alive.
+    await act(async () => { root.unmount(); });
+    delete dom.window.SpeechRecognition;
+  }
+});
+
 /* ------------------------------------------------- history, in one place --- */
 // Ryan: "merge the To-do history and the Chores history/log/archive from the
 // settings into one reports or history section in the to-dos tab."

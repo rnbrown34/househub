@@ -27,9 +27,12 @@ import * as TM from "../lib/timers.js";
 import { parseDuration, parseTimerCommand, parseStopCommand, matchTimerByName } from "../lib/timer-voice.js";
 import { parseTaskCommand, taskFromCommand, taskFromFields } from "../lib/task-voice.js";
 import { uid } from "../lib/document.js";
-import { connectVoice } from "../lib/ha-voice.js";
+import { connectVoice, relayKey } from "../lib/ha-voice.js";
 import * as session from "../lib/session.js";
 import { loadVoiceLink } from "../api.js";
+
+/* Words that mean a sentence is about a task, parsed or not. */
+const TASK_WORD = /\b(?:tasks?|to[\s-]?dos?|todos?)\b/i;
 
 /* Quick durations, in minutes. Chosen for a kitchen rather than for round
    numbers: 3 is tea, 12 is pasta, 25 is a pomodoro and a tray of vegetables. */
@@ -300,6 +303,9 @@ export function TimerBar({ data, update, T, personId = "" }) {
   const addTask = useCallback((cmd, id) => {
     const people = data?.people || [];
     const who = cmd.assigned === "self" ? personId : cmd.personId;
+    /* A relayed command another screen already wrote is not news here: no
+       toast, so no Undo pointing at a row this screen did not add. */
+    if (id && (data?.tasks || []).some((t) => t.id === id)) return;
     const task = taskFromCommand({ ...cmd, personId: who }, id ? () => id : uid);
     update((d) => ((d.tasks || []).some((t) => t.id === task.id) ? d
       : { ...d, tasks: [...(d.tasks || []), task] }));
@@ -322,6 +328,10 @@ export function TimerBar({ data, update, T, personId = "" }) {
   const handleSpoken = useCallback((text, id) => {
     const taskCmd = parseTaskCommand(text, data?.people || []);
     if (taskCmd) { addTask(taskCmd, id); return; }
+    /* A sentence about a task that the grammar did not follow must stop here.
+       Falling through, its "clear" or "off" reads as a stop command, and the
+       nearest timer quietly never rings. */
+    if (TASK_WORD.test(text)) { setAddedTask({ failed: true }); return; }
     const stopCmd = parseStopCommand(text);
     if (stopCmd) {
       const live = TM.activeTimers({ timers }, Date.now());
@@ -344,7 +354,8 @@ export function TimerBar({ data, update, T, personId = "" }) {
      Shortcut does), a sentence otherwise. Either way the event's own id
      becomes the row's id -- see `add`. */
   const handleRelayed = useCallback((text, fields = {}, { eventId = "" } = {}) => {
-    const id = (kind) => (eventId ? `ha-${kind}-${eventId}` : undefined);
+    const key = relayKey(eventId, text, fields);
+    const id = (kind) => (key ? `ha-${kind}-${key}` : undefined);
     if (String(fields.task ?? "").trim()) {
       const cmd = taskFromFields(fields, data?.people || []);
       if (cmd) addTask(cmd, id("task"));
@@ -424,12 +435,18 @@ export function TimerBar({ data, update, T, personId = "" }) {
           padding: "7px 10px", fontSize: 13, color: T.ink, maxWidth: 360,
           display: "flex", alignItems: "center", gap: 10, boxShadow: "0 6px 20px rgba(0,0,0,.18)",
         }}>
-          <span>
-            Added task <b>{addedTask.title}</b>
-            <span style={{ color: T.faint }}>{addedTask.who ? ` · ${addedTask.who}` : " · nobody yet"}</span>
-          </span>
-          <button onClick={undoTask} className="tapfade"
-            style={{ color: T.brand, fontWeight: 700, background: "none", border: "none", padding: 0 }}>Undo</button>
+          {addedTask.failed ? (
+            <span>Couldn’t tell what the task was. Try “add a task to …”.</span>
+          ) : (
+            <>
+              <span>
+                Added task <b>{addedTask.title}</b>
+                <span style={{ color: T.faint }}>{addedTask.who ? ` · ${addedTask.who}` : " · nobody yet"}</span>
+              </span>
+              <button onClick={undoTask} className="tapfade"
+                style={{ color: T.brand, fontWeight: 700, background: "none", border: "none", padding: 0 }}>Undo</button>
+            </>
+          )}
         </div>
       )}
 

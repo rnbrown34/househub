@@ -11,11 +11,14 @@
 // become a task by accident. So nothing here fires without "task" or "to-do"
 // (or "…to my list") in the sentence.
 //
-// And the assignee is only taken when it is somebody. "Buy flowers for mum" is
-// a task about mum unless mum is a person in this household; stripping any
-// trailing "for X" would eat half the titles people actually say. A name that
-// matches nobody stays in the title, and the task is left unassigned for
-// somebody to claim in the app.
+// And the assignee is only taken when it is somebody, and a trailing "for X"
+// never cuts the title. "Ring the plumber for Sam" and "buy flowers for mum"
+// have the same shape and opposite meanings, so a trailing name assigns the
+// task but stays in the title: on the wrong person it is still the right
+// task, and the toast shows who it went to. Only phrasings that can mean
+// nothing else are taken out of the title -- "for Sam to …" at the front,
+// "… and give it to Sam" at the end. A name that matches nobody stays in the
+// title, and the task is left unassigned for somebody to claim in the app.
 
 /* Words that mean "nobody in particular" when they follow "for". Said aloud,
    "for anyone" is a real answer to "who's it for", and it should not end up in
@@ -35,8 +38,14 @@ const LEADS = [
   // "task: book the MOT", "to-do ring the plumber"
   /^(?:task|to[\s-]?do|todo)\b[\s,:-]+(.*)$/,
 ];
-/* "add ring the plumber to my task list", "put book the MOT on the to-do list" */
-const TO_LIST = /^(?:add|put)\s+(.+?)\s+(?:to|on(?:to)?)\s+(?:the\s+|my\s+|our\s+)?(?:task|tasks|to[\s-]?do|to[\s-]?dos|todo|todos)(?:\s+list)?$/;
+/* "add ring the plumber to my task list", "put book the MOT on sam's to-do
+   list please", and list-first: "add to the to-do list: book the MOT". The
+   possessive is captured so "sam's list" can assign; anything after "list"
+   is kept for the tail parser rather than defeating the match. */
+const LIST_WORD = "(?:task|tasks|to[\\s-]?do|to[\\s-]?dos|todo|todos)(?:\\s+list)?";
+const WHOSE = "(?:(?:the|my|our)\\s+|(\\S+?)'s\\s+)?";
+const TO_LIST = new RegExp(`^(?:add|put)\\s+(.+?)\\s+(?:to|on(?:to)?)\\s+${WHOSE}${LIST_WORD}(?:[\\s,]+(.*))?$`);
+const LIST_FIRST = new RegExp(`^(?:add|put)\\s+(?:to|on(?:to)?)\\s+${WHOSE}${LIST_WORD}[\\s,:-]+(.+)$`);
 
 const POLITE = /^(?:(?:hey|ok|okay)\s+)?(?:(?:house\s*hub|hub|house)[\s,]+)?(?:(?:please|can you|could you|would you)\s+)*/;
 
@@ -50,6 +59,7 @@ function normalise(text) {
   return String(text || "")
     .toLowerCase()
     .replace(/[“”"]/g, "")
+    .replace(/[‘’]/g, "'")
     .replace(/[.!?]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -72,8 +82,37 @@ export function matchPerson(people, spoken) {
   return first.length === 1 ? first[0] : null;
 }
 
-/* Peel one trailing "for Sam" / "tomorrow" / "for anyone" off the body. Returns
-   what it found, or null when the tail is part of the title. */
+/* Who a spoken "who" means: a person, me, or nobody in particular. */
+function whoIs(people, spoken) {
+  const who = normalise(spoken);
+  if (SELF.has(who)) return { self: true };
+  if (NOBODY.has(who)) return { nobody: true };
+  const person = matchPerson(people, who);
+  return person ? { person } : null;
+}
+
+/* "for Sam to ring the plumber", "for tomorrow: book the MOT". A name at the
+   front, followed by the task, can only be the assignee. Tries a two-word
+   name before a one-word one so "for Alex Brown to …" keeps its surname out
+   of the title. */
+function peelHead(body, people) {
+  const words = body.split(" ");
+  if (words[0] !== "for" || words.length < 3) return null;
+  for (const n of [2, 1]) {
+    const spoken = words.slice(1, 1 + n).join(" ").replace(/[,:]+$/, "");
+    let rest = words.slice(1 + n);
+    if (rest[0] === "to") rest = rest.slice(1);
+    if (!rest.length) continue;
+    if (DAYS[spoken] !== undefined) return { rest: rest.join(" "), day: DAYS[spoken] };
+    const who = whoIs(people, spoken);
+    if (who) return { rest: rest.join(" "), ...who };
+  }
+  return null;
+}
+
+/* Peel one tail off the body. Returns what it found, or null when the tail is
+   part of the title. `keep` is text that assigned the task but stays in the
+   title -- see the note at the top. */
 function peelTail(body, people) {
   // "for tomorrow" before bare "tomorrow", or the "for" is left in the title.
   let m = body.match(/^(.*?)[\s,]+(?:due|by|for)\s+(today|tonight|tomorrow)$/);
@@ -81,13 +120,23 @@ function peelTail(body, people) {
   m = body.match(/^(.*?)[\s,]+(today|tonight|tomorrow)$/);
   if (m && m[1]) return { rest: m[1], day: DAYS[m[2]] };
 
-  m = body.match(/^(.*?)[\s,]+(?:for|assign(?:ed)?\s+(?:it\s+)?to|give\s+(?:it\s+)?to)\s+(.+)$/);
+  // "… and give it to Sam", "… assigned to Sam": unambiguous, so cut,
+  // together with the "and" that would otherwise dangle.
+  // Greedy, so the LAST "for"/"give it to" is the one tried: "pay for
+  // swimming for Sam" is about Sam, not "swimming for Sam".
+  m = body.match(/^(.*?)(?:[\s,]+and)?[\s,]+(?:assign(?:ed)?\s+(?:it\s+)?to|give\s+(?:it\s+)?to)\s+(\S+(?:\s+\S+)?)$/);
+  if (m && m[1]) {
+    const who = whoIs(people, m[2]);
+    if (who) return { rest: m[1], ...who };
+  }
+
+  m = body.match(/^(.*)[\s,]+for\s+(\S+(?:\s+\S+)?)$/);
   if (!m || !m[1]) return null;
-  const who = m[2].trim();
-  if (SELF.has(who)) return { rest: m[1], self: true };
-  if (NOBODY.has(who)) return { rest: m[1], nobody: true };
-  const person = matchPerson(people, who);
-  return person ? { rest: m[1], person } : null;
+  const who = whoIs(people, m[2]);
+  if (!who) return null;
+  // "for me" and "for anyone" are answers, not part of what the task is.
+  if (who.self || who.nobody) return { rest: m[1], ...who };
+  return { rest: m[1], keep: ` for ${m[2]}`, ...who };
 }
 
 /* "Ring the plumber" rather than "ring the plumber": the wall shows it. Takes
@@ -118,9 +167,11 @@ export function parseTaskCommand(text, people = [], { now = new Date() } = {}) {
   const said = normalise(raw).replace(POLITE, "");
   if (!said) return null;
 
-  let body = null;
+  let body = null, whose = "";
   const list = said.match(TO_LIST);
-  if (list) body = list[1];
+  const first = list ? null : said.match(LIST_FIRST);
+  if (list) { body = [list[1], list[3]].filter(Boolean).join(" "); whose = list[2] || ""; }
+  else if (first) { body = first[2]; whose = first[1] || ""; }
   else {
     for (const re of LEADS) {
       const m = said.match(re);
@@ -130,19 +181,31 @@ export function parseTaskCommand(text, people = [], { now = new Date() } = {}) {
   if (body === null) return null;
   body = body.replace(/[\s,]+please$/, "").replace(/^[\s,:-]+|[\s,:-]+$/g, "");
 
-  let personId = "", assigned = "", day = 0;
-  // Up to two tails, so "for Sam tomorrow" and "tomorrow for Sam" both work.
-  for (let i = 0; i < 2; i++) {
+  let personId = "", assigned = "", day = 0, kept = "";
+  const take = (found) => {
+    if (found.day !== undefined) day = found.day;
+    if (found.person) { personId = found.person.id; assigned = "person"; }
+    if (found.self) assigned = "self";
+    if (found.nobody) assigned = "nobody";
+  };
+
+  // "sam's to-do list" says whose it is.
+  const owner = whose ? matchPerson(people, whose) : null;
+  if (owner) take({ person: owner });
+
+  const head = peelHead(body, people);
+  if (head) { take(head); body = head.rest; }
+
+  // Up to three tails, so "for Sam tomorrow" and "tomorrow for Sam" both work.
+  for (let i = 0; i < 3; i++) {
     const tail = peelTail(body, people);
     if (!tail) break;
     body = tail.rest.replace(/[\s,]+$/g, "");
-    if (tail.day !== undefined) day = tail.day;
-    if (tail.person) { personId = tail.person.id; assigned = "person"; }
-    if (tail.self) assigned = "self";
-    if (tail.nobody) assigned = "nobody";
+    if (tail.keep) kept = tail.keep + kept;
+    take(tail);
   }
 
-  const title = titleFrom(raw, body).slice(0, 120);
+  const title = titleFrom(raw, body + kept).slice(0, 120);
   if (!title) return null;
 
   const d = new Date(now);

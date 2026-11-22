@@ -50,9 +50,12 @@ test("nothing without the word task or to-do: a stray sentence is not a task", (
   }
 });
 
-test("a name after 'for' assigns it, when it is somebody here", () => {
+test("a name after 'for' assigns it, when it is somebody here, and stays in the title", () => {
+  // "Ring the plumber for Sam" and "buy flowers for mum" have the same shape
+  // and opposite meanings; keeping the words means a wrong guess still leaves
+  // the right task on the list.
   const got = parse("add a task to book the mot for sam");
-  assert.equal(got.title, "Book the mot");
+  assert.equal(got.title, "Book the mot for sam");
   assert.equal(got.personId, "p-sam");
   assert.equal(got.assigned, "person");
 
@@ -98,10 +101,11 @@ test("tomorrow moves the date, in either order with a name", () => {
     "add a task ring the plumber tomorrow for sam",
   ]) {
     const got = parse(said);
-    assert.equal(got.title, "Ring the plumber", said);
+    assert.equal(got.title.replace(/ for sam$/, ""), "Ring the plumber", said);
     assert.equal(got.date, "2026-09-26", said);
   }
   assert.equal(parse("add a task ring the plumber tomorrow for sam").personId, "p-sam");
+  assert.equal(parse("add a task ring the plumber for sam tomorrow").title, "Ring the plumber for sam");
 });
 
 test("an ambiguous first name assigns nobody rather than guessing", () => {
@@ -117,7 +121,7 @@ test("the household's own capitalisation survives when it was typed", () => {
 
 test("the task it builds has the shape the task editor writes", () => {
   let n = 0;
-  const t = V.taskFromCommand(parse("add a task ring the plumber for sam"), () => `id${++n}`);
+  const t = V.taskFromCommand(parse("add a task for sam to ring the plumber"), () => `id${++n}`);
   assert.deepEqual(t, {
     id: "id1", title: "Ring the plumber", date: "2026-09-25", personId: "p-sam",
     alert: null, steps: [], note: "", done: false,
@@ -166,4 +170,67 @@ test("fields are tidied the way dictation leaves them", () => {
   assert.equal(f({ task: "post it", when: "tomorrow" }).date, "2026-09-26");
   assert.equal(f({ task: "   " }), null);
   assert.equal(f({}), null);
+});
+
+/* --------------------------------------- found in review before release --- */
+
+test("a name straight after 'add a task' assigns it, which is how people say it", () => {
+  for (const said of [
+    "add a task for sam to ring the plumber",
+    "add a task for sam ring the plumber",
+    "new task for sam: ring the plumber",
+  ]) {
+    const got = parse(said);
+    assert.equal(got.title, "Ring the plumber", said);
+    assert.equal(got.personId, "p-sam", said);
+  }
+  assert.equal(parse("add a task for alex brown to tidy up").title, "Tidy up");
+  assert.equal(parse("add a task for alex brown to tidy up").personId, "p-alex");
+
+  const later = parse("add a task for tomorrow to ring the plumber");
+  assert.equal(later.title, "Ring the plumber");
+  assert.equal(later.date, "2026-09-26");
+});
+
+test("an earlier 'for' in the title does not hide the assignee at the end", () => {
+  const got = parse("add a task to pay for swimming for sam");
+  assert.equal(got.title, "Pay for swimming for sam");
+  assert.equal(got.personId, "p-sam");
+  // and with no person at the end, the title is untouched and nobody assigned
+  const none = parse("add a task to look for the passports");
+  assert.equal(none.title, "Look for the passports");
+  assert.equal(none.personId, "");
+});
+
+test("'give it to' and 'assign it to' never leave a dangling 'and'", () => {
+  for (const said of [
+    "add a task to wrap the present and give it to sam",
+    "add a task to wrap the present and assign it to sam",
+  ]) {
+    const got = parse(said);
+    assert.equal(got.title, "Wrap the present", said);
+    assert.equal(got.personId, "p-sam", said);
+  }
+});
+
+test("to-do list phrasings people actually use are tasks, not near-misses", () => {
+  // Each of these used to miss the task grammar and fall through to the stop
+  // parser, which silenced a running timer on "clear" or "off".
+  const cases = [
+    ["add clear the gutters to sam's to-do list", "Clear the gutters", "p-sam", "2026-09-25"],
+    ["add turn off the outside tap to my to-do list please", "Turn off the outside tap", "", "2026-09-25"],
+    ["add to my to-do list clear the gutters", "Clear the gutters", "", "2026-09-25"],
+    ["put switch off the router on the to-do list for tomorrow", "Switch off the router", "", "2026-09-26"],
+  ];
+  for (const [said, title, personId, date] of cases) {
+    const got = parse(said);
+    assert.ok(got, said);
+    assert.equal(got.title, title, said);
+    assert.equal(got.personId, personId, said);
+    assert.equal(got.date, date, said);
+  }
+});
+
+test("a curly apostrophe from dictation reads like a straight one", () => {
+  assert.equal(parse("add clear the gutters to sam’s to-do list").personId, "p-sam");
 });

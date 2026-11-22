@@ -207,3 +207,28 @@ test("every screen hearing one broadcast gets the same event id", () => {
   a.say(ev); b.say(ev);
   assert.deepEqual(ids, ["ctx-1", "ctx-1"]);
 });
+
+/* ------------------------------------------- one run, several commands --- */
+
+test("the same command from one event is one key on every screen", () => {
+  const a = HV.relayKey("ctx-1", "", { task: "Post the letter", person: "Sam" });
+  const b = HV.relayKey("ctx-1", "", { task: "Post the letter", person: "Sam" });
+  assert.equal(a, b);
+  assert.ok(a.startsWith("ctx-1-"));
+});
+
+test("two different commands from one automation run get different keys", () => {
+  // Home Assistant gives every event in one run the same context id; keyed on
+  // that alone, the second command was silently dropped.
+  const bins = HV.relayKey("ctx-run", "", { task: "Bins out" });
+  const cat = HV.relayKey("ctx-run", "", { task: "Feed the cat" });
+  assert.notEqual(bins, cat);
+  const pasta = HV.relayKey("ctx-run", "", { timer: 600, label: "pasta", display: "Kitchen wall" });
+  const bread = HV.relayKey("ctx-run", "", { timer: 1500, label: "bread", display: "Hallway" });
+  assert.notEqual(pasta, bread);
+  assert.notEqual(HV.relayKey("ctx-run", "set a timer for 5 minutes"), HV.relayKey("ctx-run", "set a timer for 9 minutes"));
+});
+
+test("no context id means no shared key, so the screen makes its own", () => {
+  assert.equal(HV.relayKey("", "", { task: "x" }), "");
+});
